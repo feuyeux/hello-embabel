@@ -1,0 +1,6 @@
+[submodule "kotlin"]
+	path = kotlin
+	url = git@github.com:feuyeux/hello-embabel-kotlin.git
+[submodule "java"]
+	path = java
+	url = git@github.com:feuyeux/hello-embabel-java.git
