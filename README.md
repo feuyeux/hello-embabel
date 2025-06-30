@@ -20,6 +20,11 @@
 
 ```
 hello-embabel/
+├── .github/        # GitHub 配置文件
+│   ├── dependabot.yml              # Dependabot 依赖更新配置
+│   └── workflows/
+│       ├── ci.yml                  # CI/CD 流水线
+│       └── update-submodules.yml   # 子模块自动更新
 ├── java/           # Java 版本实现
 │   ├── src/
 │   ├── pom.xml
@@ -32,6 +37,13 @@ hello-embabel/
 └── README.md       # 项目说明文档
 ```
 
+## ⚙️ 系统要求
+
+- **Java**: JDK 21 或更高版本
+- **Maven**: 3.6+ 
+- **Git**: 支持子模块操作
+- **操作系统**: Linux, macOS, Windows
+
 ## 🚀 快速开始
 
 如果已经克隆了项目但没有子模块：
@@ -42,7 +54,9 @@ git submodule update --init --recursive
 
 ### 更新子模块
 
-如果需要将子模块更新到最新版本：
+#### 手动更新
+
+如果需要手动将子模块更新到最新版本：
 
 ```bash
 # 更新所有子模块到最新提交
@@ -58,6 +72,40 @@ cd ..
 # 提交子模块更新
 git add .
 git commit -m "Update submodules to latest version"
+```
+
+#### 自动更新 🤖
+
+项目已配置完全自动化的更新流程：
+
+**📦 依赖更新流程**：
+1. Dependabot 每周一自动检查Maven依赖更新
+2. 创建PR并自动标记 `automerge`
+3. CI流水线自动测试Java和Kotlin项目
+4. 测试通过后自动合并到main分支
+
+**🔄 子模块更新流程**：
+1. GitHub Actions 每周一自动检查子模块更新
+2. 检测到更新时自动创建PR
+3. CI流水线验证两个子项目兼容性
+4. 所有测试通过后自动合并
+
+**✅ 完全自动化特性**：
+- 🚀 零人工干预的更新流程
+- 🔍 自动检测变更和兼容性
+- 🛡️ 测试失败时停止自动合并
+- 📝 详细的更新日志和说明
+
+**配置文件位置**：
+- `.github/dependabot.yml` - Dependabot配置
+- `.github/workflows/ci.yml` - CI/CD流水线和自动合并
+- `.github/workflows/update-submodules.yml` - 子模块自动更新
+
+**手动触发更新**：
+```bash
+# 在GitHub仓库页面 Actions 标签页可手动触发工作流
+# 或使用GitHub CLI
+gh workflow run "Update Submodules"
 ```
 
 ### 运行 Java 版本
@@ -226,6 +274,14 @@ sequenceDiagram
 ```
 
 ## 🔑 核心特性
+
+### 开发与维护
+
+- **🤖 完全自动化更新**: 零人工干预的依赖和子模块更新流程
+- **📦 智能依赖管理**: Dependabot自动检查Maven依赖兼容性
+- **🔄 子模块自动同步**: 定期自动更新到最新子模块版本
+- **✅ 安全的自动合并**: 仅在所有测试通过后自动合并
+- **🚀 CI/CD流水线**: 完整的测试、构建和部署自动化
 
 ### Shell 模式（完整功能）
 

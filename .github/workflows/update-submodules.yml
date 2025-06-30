@@ -1,0 +1,126 @@
+name: Update Submodules
+
+on:
+  schedule:
+    # 每周一早上 9:00 UTC 运行
+    - cron: '0 9 * * 1'
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  update-submodules:
+    name: Update Git Submodules
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        submodules: recursive
+        fetch-depth: 0
+        
+    - name: Check and update submodules
+      id: submodule-check
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # 记录更新前的子模块状态
+        echo "=== Current submodule status ==="
+        git submodule status
+        
+        # 更新所有子模块到最新版本
+        git submodule update --remote --recursive
+        
+        # 检查是否有变更
+        if git diff --quiet; then
+          echo "No submodule updates available"
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        echo "=== Updated submodule status ==="
+        git submodule status
+        
+        # 记录变更详情
+        echo "=== Changes detected ==="
+        git diff --name-only
+        git status --porcelain
+        
+        echo "has_changes=true" >> $GITHUB_OUTPUT
+        
+    - name: Create Pull Request for submodule updates
+      if: steps.submodule-check.outputs.has_changes == 'true'
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        commit-message: |
+          chore: update submodules to latest versions
+          
+          Auto-updated by GitHub Actions
+          - Updated Java implementation submodule
+          - Updated Kotlin implementation submodule
+        title: "🔄 Auto-update submodules to latest versions"
+        body: |
+          ## 📦 Submodule Updates
+          
+          This PR automatically updates all git submodules to their latest versions.
+          
+          ### Changes
+          - ⬆️ Updated Java implementation submodule
+          - ⬆️ Updated Kotlin implementation submodule
+          
+          ### Automatic Process
+          - ✅ Submodules updated to latest commits
+          - ✅ CI tests will verify compatibility
+          - ✅ Auto-merge enabled after tests pass
+          
+          ### Next Steps
+          This PR will be automatically merged once all CI checks pass.
+          
+          > 🤖 This PR was created automatically by GitHub Actions
+        branch: auto-update-submodules
+        delete-branch: true
+        labels: |
+          dependencies
+          submodules
+          automerge
+        assignees: embabel
+        reviewers: embabel
+
+  auto-merge:
+    name: Auto-merge submodule updates
+    runs-on: ubuntu-latest
+    needs: update-submodules
+    if: needs.update-submodules.outputs.has_changes == 'true'
+    
+    steps:
+    - name: Wait for CI checks
+      uses: lewagon/wait-on-check-action@v1.3.1
+      with:
+        ref: auto-update-submodules
+        check-name: 'Test Java Implementation'
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        wait-interval: 30
+        
+    - name: Wait for Kotlin CI checks
+      uses: lewagon/wait-on-check-action@v1.3.1
+      with:
+        ref: auto-update-submodules
+        check-name: 'Test Kotlin Implementation'
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        wait-interval: 30
+        
+    - name: Enable auto-merge
+      run: |
+        # 获取PR号码
+        PR_NUMBER=$(gh pr list --head auto-update-submodules --json number --jq '.[0].number')
+        
+        if [ -n "$PR_NUMBER" ]; then
+          echo "Enabling auto-merge for PR #$PR_NUMBER"
+          gh pr merge $PR_NUMBER --auto --squash
+        else
+          echo "No PR found for auto-update-submodules branch"
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

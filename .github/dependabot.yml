@@ -1,0 +1,63 @@
+# Dependabot 配置文件
+# 自动检查和更新项目依赖
+version: 2
+updates:
+  # Java 项目依赖更新
+  - package-ecosystem: "maven"
+    directory: "/java"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "embabel"
+    assignees:
+      - "embabel"
+    commit-message:
+      prefix: "deps(java)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "java"
+      - "automerge"
+
+  # Kotlin 项目依赖更新
+  - package-ecosystem: "maven"
+    directory: "/kotlin"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "embabel"
+    assignees:
+      - "embabel"
+    commit-message:
+      prefix: "deps(kotlin)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "kotlin"
+      - "automerge"
+
+  # GitHub Actions 工作流更新
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "embabel"
+    assignees:
+      - "embabel"
+    commit-message:
+      prefix: "deps(actions)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "automerge"
