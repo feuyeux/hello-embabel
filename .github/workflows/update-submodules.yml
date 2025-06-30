@@ -51,7 +51,7 @@ jobs:
         
     - name: Create Pull Request for submodule updates
       if: steps.submodule-check.outputs.has_changes == 'true'
-      uses: peter-evans/create-pull-request@v5
+      uses: peter-evans/create-pull-request@v7
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         commit-message: |
