@@ -96,7 +96,7 @@ jobs:
     
     steps:
     - name: Wait for CI checks
-      uses: lewagon/wait-on-check-action@v1.3.1
+      uses: lewagon/wait-on-check-action@v1.4.0
       with:
         ref: auto-update-submodules
         check-name: 'Test Java Implementation'
@@ -104,7 +104,7 @@ jobs:
         wait-interval: 30
         
     - name: Wait for Kotlin CI checks
-      uses: lewagon/wait-on-check-action@v1.3.1
+      uses: lewagon/wait-on-check-action@v1.4.0
       with:
         ref: auto-update-submodules
         check-name: 'Test Kotlin Implementation'
