@@ -40,6 +40,26 @@ hello-embabel/
 git submodule update --init --recursive
 ```
 
+### 更新子模块
+
+如果需要将子模块更新到最新版本：
+
+```bash
+# 更新所有子模块到最新提交
+git submodule update --remote --recursive
+
+# 或者手动进入子模块目录更新
+cd java
+git pull origin main
+cd ../kotlin  
+git pull origin main
+cd ..
+
+# 提交子模块更新
+git add .
+git commit -m "Update submodules to latest version"
+```
+
 ### 运行 Java 版本
 
 ```bash
