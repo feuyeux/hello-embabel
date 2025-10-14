@@ -33,9 +33,13 @@ hello-embabel/
 ```
 
 ## 🚀 快速开始
-如果已经克隆了项目但没有子模块：
+
 ```bash
 git submodule update --init --recursive
+```
+
+```bash
+git submodule update --remote --merge
 ```
 
 ### 运行 Java 版本
@@ -175,3 +179,9 @@ embabel.models.default-embedding-model=nomic-embed-text:latest
 storyWordCount=100
 reviewWordCount=100
 ```
+
+---
+
+- https://docs.embabel.com/embabel-agent/guide/0.1.3/
+- https://github.com/embabel/java-agent-template
+- https://github.com/embabel/kotlin-agent-template
