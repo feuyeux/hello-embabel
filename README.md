@@ -1,16 +1,11 @@
 # Hello Embabel
 
-![Java](https://img.shields.io/badge/java-%23ED8B00.svg?style=for-the-badge&logo=openjdk&logoColor=white)
-![Kotlin](https://img.shields.io/badge/kotlin-%237F52FF.svg?style=for-the-badge&logo=kotlin&logoColor=white)
-![Spring](https://img.shields.io/badge/spring-%236DB33F.svg?style=for-the-badge&logo=spring&logoColor=white)
-![Apache Maven](https://img.shields.io/badge/Apache%20Maven-C71A36?style=for-the-badge&logo=Apache%20Maven&logoColor=white)
-![ChatGPT](https://img.shields.io/badge/chatGPT-74aa9c?style=for-the-badge&logo=openai&logoColor=white)
-
-<img align="left" src="https://github.com/embabel/embabel-agent/blob/main/embabel-agent-api/images/315px-Meister_der_Weltenchronik_001.jpg?raw=true" width="180">
-
-&nbsp;&nbsp;&nbsp;&nbsp;
-
-&nbsp;&nbsp;&nbsp;&nbsp;
+>
+> - https://docs.embabel.com
+> - https://github.com/embabel/java-agent-template
+> - https://github.com/embabel/kotlin-agent-template
+> - https://github.com/embabel/embabel-agent/tags
+> - https://github.com/embabel/embabel-agent/releases
 
 一个展示 [Embabel 框架](https://github.com/embabel/embabel-agent) AI 代理开发的多语言示例项目。
 
@@ -99,7 +94,3 @@ reviewWordCount=100
 ```
 
 ---
-
-- https://docs.embabel.com/embabel-agent/guide/0.1.3/
-- https://github.com/embabel/java-agent-template
-- https://github.com/embabel/kotlin-agent-template
