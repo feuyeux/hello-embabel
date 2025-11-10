@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 http://maven.apache.org/xsd/settings-1.0.0.xsd">
+    <pluginGroups>
+        <pluginGroup>org.apache.tomcat.maven</pluginGroup>
+    </pluginGroups>
+
+    <mirrors>
+        <mirror>
+            <id>nexus-aliyun</id>
+            <mirrorOf>central</mirrorOf>
+            <name>Nexus aliyun</name>
+            <url>http://maven.aliyun.com/nexus/content/groups/public/</url>
+        </mirror>
+        <!-- 
+        Maven从3.8.1版本开始，默认在settings.xml中添加了镜像maven-default-http-blocker
+        其作用是通过拦截HTTP协议的仓库请求来增强安全性 
+        -->
+        <mirror>
+            <id>allow-http</id>
+            <mirrorOf>external:*,!embabel-releases,!embabel-snapshots</mirrorOf>
+            <name>Allow access to all external repositories via http</name>
+            <url>http://nexus.logan.xiaopeng.local:8081/nexus/content/groups/public</url>
+            <blocked>false</blocked>
+        </mirror>
+    </mirrors>
+</settings>
