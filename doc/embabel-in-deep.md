@@ -5,161 +5,186 @@
 
 ---
 
-## 目录
+## 关键组件
 
-1. [框架概述](#1-框架概述)
-2. [核心架构](#2-核心架构)
-3. [真实调用链路](#3-真实调用链路)
-4. [GOAP 规划原理](#4-goap-规划原理)
-5. [性能分析](#5-性能分析)
+| 组件 | 职责 | 实现类 | 包名 | 库名 |
+|:-----|:-----|:-------|:-----|:-----|
+| Shell | 用户交互入口 | `ShellCommands` | `com.embabel.agent.shell` | embabel-agent-shell-0.1.4.jar |
+| Autonomy | Agent 选择与执行协调 | `Autonomy` | `com.embabel.agent.api.common.autonomy` | embabel-agent-api-0.1.4.jar |
+| Process | 进程生命周期管理 | `SimpleAgentProcess` | `com.embabel.agent.core.support` | embabel-agent-api-0.1.4.jar |
+| Planner | GOAP 规划算法 | `GoapPlanner` | `com.embabel.plan.goap` | embabel-agent-api-0.1.4.jar |
+| ActionRunner | Action 执行与计时 | `ActionRunner` | `com.embabel.agent.core` | embabel-agent-api-0.1.4.jar |
+| ActionManager | 方法调用管理 | `DefaultActionMethodManager` | `com.embabel.agent.api.annotation.support` | embabel-agent-api-0.1.4.jar |
+| AIContext | AI 服务访问 | `OperationContext` | `com.embabel.agent.api.common` | embabel-agent-api-0.1.4.jar |
+| LLM Client | LLM 调用 | `ChatClientLlmOperations` | `com.embabel.agent.spi.support.springai` | embabel-agent-api-0.1.4.jar |
 
 ---
 
-## 1. 框架概述
+## 调用堆栈
 
-### 1.1 Embabel 是什么
+基于 `doc/*stack*.txt` 的 craftStory 调用堆栈:
 
-Embabel 是基于 Spring Boot 的 AI Agent 开发框架，核心特点：
+```
+Ollama (qwen2.5:latest)
+     ↑
+ChatClientLlmOperations (LLM 客户端)
+     ↑
+OperationContext (AI 服务)
+     ↑
+WriteAndReviewAgent.craftStory()           ← 业务逻辑 (java:139)
+     ↑
+-------     
+Method.invoke(obj, args) -> DirectMethodHandleAccessor.invoke()          ← Java 反射
+     ↑
+KCallableImpl.call() -> CallerImpl.callMethod(args[0], args.dropFirst())               ← Kotlin 反射 (kt:107)
+     ↑
+invokeActionMethodKotlinReflect(method, kFunction, instance, actionContext) -> kFunction.call(*args)
+     ↑
+DefaultActionMethodManager.createAction(method, instance) -> invokeActionMethod(method, instance, actionContext)  ← 方法管理
+------- 
+block.transform(
+    TransformationActionContext(
+        input = inputValues,
+        processContext = processContext,
+        inputClass = List::class.java as Class<List<Any>>,
+        outputClass = outputClass,
+        action = this,
+    )
+)
+     ↑
+ActionRunner.execute(processContext) -> MultiTransformationAction.execute(processContext) ← 执行器 (kt:50)
+     ↑
+RetryTemplate.doExecute()                  ← 重试机制
+     ↑
+AbstractAgentProcess.executeAction(action) -> action.execute(processContext = processContext)
+     ↑  
+AbstractAgentProcess.run() -> tick() -> SimpleAgentProcess.formulateAndExecutePlan(worldState)      ← 进程执行  
+ -> Planner.bestValuePlanToAnyGoal(system = agent.planningSystem) -> Planner.plansToGoals(system) -> OptimizingGoapPlanner.planToGoal(actions, goal) 
+ -> AStarGoapPlanner.planToGoalFrom(startState, actions, goal)    ← A*_search_algorithm
+ -> action = plan.actions.first()
+     ↑
+Autonomy.chooseAndRunAgent() -> runAgent()                        ← 协调层
+     ↑
+ShellCommands.execute() -> executeIntent() -> runProcess()                 ← Shell 入口 (kt:322)
+     ↑
+用户输入query
+```
 
-- **GOAP (Goal-Oriented Action Planning)** - 目标导向的动作规划引擎
-- **注解驱动** - 通过 `@Agent` 和 `@Action` 注解声明智能体和动作
-- **动态规划** - 根据当前状态和目标自动规划执行路径
-- **多人格 LLM** - 支持不同任务使用不同的 AI 人格
+### 关键链路
 
-### 1.2 核心概念
+![](embabel.png)
 
-**Agent (智能体)**:
-```java
-@Agent(description = "Generate a story based on user input and review it")
-public class WriteAndReviewAgent {
+在 `MultiTransformationAction.execute()` 方法中，`block.transform()` 是如何走到 `DefaultActionMethodManager.createAction()` 的？
+
+`block` 是 `Transformation` 类型的实例，但 `DefaultActionMethodManager` 和 `Transformation` 并没有直接的继承或实现关系。
+
+通过 Kotlin 的 **SAM (Single Abstract Method) 转换**，lambda 表达式被自动转换为函数式接口的实现。
+
+#### 1. Transformation 是函数式接口
+
+```kotlin
+// Transformation.kt
+fun interface Transformation<I, O> {
+    fun transform(context: TransformationActionContext<I, O>): O?
+}
+```
+
+`fun interface` 关键字表示这是一个**函数式接口**（SAM 类型），只有一个抽象方法 `transform()`。
+
+#### 2. MultiTransformationAction 持有 Transformation 对象
+
+```kotlin
+// TransformationAction.kt (与 MultiTransformationAction 同为 AbstractAction 的子类)
+open class TransformationAction<I, O>(
+    // ... 其他参数
+    private val block: Transformation<I, O>,  // ← 持有 Transformation 对象
+) : AbstractAction(...) {
     
-    @Action
-    Story craftStory(UserInput userInput, OperationContext context) {
-        // 创作故事
-    }
+    override fun execute(processContext: ProcessContext): ActionStatus = 
+        ActionRunner.execute(processContext) {
+            val input = processContext.getValue(inputVarName, inputClass.name) as I
+            val output = block.transform(  // ← 调用 Transformation.transform()
+                TransformationActionContext(
+                    input = input,
+                    processContext = processContext,
+                    action = this,
+                    inputClass = inputClass,
+                    outputClass = outputClass,
+                )
+            )
+            // ... 处理输出
+        }
+}
+```
+
+#### 3. DefaultActionMethodManager.createAction() 传入 Lambda
+
+```kotlin
+// DefaultActionMethodManager.kt (第 73-90 行)
+override fun createAction(
+    method: Method,
+    instance: Any,
+    toolCallbacksOnInstance: List<ToolCallback>,
+): Action {
+    // ... 解析参数和注解
     
-    @AchievesGoal(description = "The story has been crafted and reviewed")
-    @Action
-    ReviewedStory reviewStory(UserInput userInput, Story story, OperationContext context) {
-        // 评审故事
+    return MultiTransformationAction(
+        name = nameGenerator.generateName(instance, method.name),
+        description = actionAnnotation.description.ifBlank { method.name },
+        // ... 其他参数
+    ) { context ->  // ← 第 85 行：Lambda 表达式
+        invokeActionMethod(
+            method = method,
+            instance = instance,
+            actionContext = context,
+        )
     }
 }
 ```
 
-**World State (世界状态)**:
-- 表示当前系统中所有对象的存在状态
-- 例如: `{UserInput=TRUE, Story=FALSE, ReviewedStory=FALSE}`
+**关键点**:
+- 第 85 行的 lambda `{ context -> invokeActionMethod(...) }` 被传给 `MultiTransformationAction` 构造函数
+- 由于 `Transformation` 是函数式接口，Kotlin 编译器自动将 lambda 转换为 `Transformation` 的实现
+- 这个 lambda 在编译后生成匿名内部类：`DefaultActionMethodManager$createAction$5`
 
-**Action (动作)**:
-- 方法参数 = 前置条件 (需要哪些对象)
-- 返回类型 = 效果 (产生什么对象)
-- `@AchievesGoal` 标记目标动作
-
----
-
-## 2. 核心架构
-
-### 2.1 整体架构图
+#### 4. 完整调用链
 
 ```
-用户输入
-   ↓
-ShellCommands (Spring Shell)
-   ↓
-Autonomy (Agent 选择与执行协调)
-   ↓
-Agent Selector (LLM 驱动的 Agent 选择)
-   ↓
-SimpleAgentProcess (进程管理)
-   ↓
-GOAP Planner (A* 规划算法)
-   ↓
-ActionRunner (Action 执行器)
-   ↓
-DefaultActionMethodManager (方法调用管理)
-   ↓
-Kotlin Reflection (反射调用)
-   ↓
-WriteAndReviewAgent (业务逻辑)
-   ↓
-OperationContext (AI 服务)
-   ↓
-ChatClientLlmOperations (LLM 客户端)
-   ↓
-Ollama (qwen2.5:latest)
+MultiTransformationAction.execute()
+  └─ block.transform(context)
+      ↓
+      [block 是 Transformation 接口的实例]
+      [实际上是 DefaultActionMethodManager.createAction() 中的 lambda]
+      ↓
+      Lambda 内部代码执行：
+      └─ invokeActionMethod(method, instance, actionContext)
+          └─ invokeActionMethodKotlinReflect(method, kFunction, instance, actionContext)
+              └─ kFunction.call(*args)  // Kotlin 反射
+                  └─ Method.invoke()  // Java 反射
+                      └─ WriteAndReviewAgent.craftStory()  // 实际业务方法
 ```
 
-### 2.2 关键组件
+#### 5. 关键技术点
 
-| 组件 | 职责 | 实现类 |
-|------|------|--------|
-| Shell | 用户交互入口 | ShellCommands |
-| Autonomy | Agent 选择与执行协调 | Autonomy |
-| Process | 进程生命周期管理 | SimpleAgentProcess |
-| Planner | GOAP 规划算法 | GOAP Planner |
-| ActionRunner | Action 执行与计时 | ActionRunner |
-| ActionManager | 方法调用管理 | DefaultActionMethodManager |
-| AIContext | AI 服务访问 | OperationContext |
-| LLM Client | LLM 调用 | ChatClientLlmOperations |
+| 技术 | 说明 |
+|:-----|:-----|
+| **SAM 转换** | Kotlin 自动将 lambda 转换为函数式接口的实现 |
+| **Lambda 表达式** | `{ context -> invokeActionMethod(...) }` 是一个闭包，捕获了 `method` 和 `instance` |
+| **匿名内部类** | 编译后生成 `DefaultActionMethodManager$createAction$5` |
+| **适配器模式** | Lambda 将反射调用适配为 `Transformation` 接口 |
+| **命令模式** | 将方法调用封装为对象（`Transformation`），延迟执行 |
 
----
+#### 6. 为什么这样设计？
 
-## 3. 真实调用链路
+1. **解耦**：`MultiTransformationAction` 不需要知道具体的方法调用细节
+2. **灵活性**：可以传入任何符合 `Transformation` 接口的实现
+3. **延迟执行**：方法调用被封装为对象，在 `execute()` 时才真正执行
+4. **类型安全**：通过泛型保证输入输出类型的正确性
+5. **简洁性**：使用 lambda 表达式比手动创建匿名类更简洁
 
-### 3.1 完整时间线
+## 详细执行流程
 
-基于真实日志的完整执行时间线:
-
-| 时间 | 事件 | 耗时 |
-|------|------|------|
-| 19:50:50.068 | 用户输入: "Tell me a story about Tom and Jerry" | - |
-| 19:50:50.068 | 开始 Agent 选择 | - |
-| 19:50:55.061 | Agent 选择完成: WriteAndReviewAgent (1.0) | 4.99秒 |
-| 19:50:55.085 | GOAP 规划完成: [craftStory → reviewStory] | 0.024秒 |
-| 19:50:55.086 | 开始执行 craftStory | - |
-| 19:50:58.243 | craftStory 完成 | 3.16秒 |
-| 19:50:58.254 | GOAP 重规划完成: [reviewStory] | 0.011秒 |
-| 19:50:58.254 | 开始执行 reviewStory | - |
-| 19:51:01.434 | reviewStory 完成 | 3.18秒 |
-| 19:51:01.443 | 目标达成，流程结束 | 总计: 11.38秒 |                            
-
-
-### 3.2 完整调用堆栈
-
-基于 `doc/stack.txt` 的 craftStory 调用堆栈:
-
-```
-10. WriteAndReviewAgent.craftStory()           ← 业务逻辑 (java:139)
-     ↑
- 9. Method.invoke()                            ← Java 反射
-     ↑
- 8. KCallableImpl.call()                       ← Kotlin 反射 (kt:107)
-     ↑
- 7. DefaultActionMethodManager.invokeActionMethod()  ← 方法管理
-     ↑
- 6. ActionRunner.execute()                     ← 执行器 (kt:50)
-     ↑
- 5. RetryTemplate.doExecute()                  ← 重试机制
-     ↑
- 4. AbstractAgentProcess.executeAction()       ← 进程执行
-     ↑
- 3. Autonomy.runAgent()                        ← 协调层
-     ↑
- 2. ShellCommands.execute()                    ← Shell 入口 (kt:322)
-     ↑
- 1. HelloJavaApplication.main()                ← 应用入口 (java:27)
-```
-
-**关键观察**:
-- 从用户输入到业务逻辑经过 **10 层调用**
-- 使用 **Kotlin 反射** 而非 Java 反射
-- 包含 **Spring Retry** 机制
-- **ActionRunner** 负责性能计时
-
-
-### 3.3 详细执行流程
-
-#### 阶段 1: Agent 选择 (4.99秒)
+### 阶段 1: Agent 选择 (4.99秒)
 
 ```
 19:50:50.068  ShellCommands.execute()
@@ -180,6 +205,7 @@ Ollama (qwen2.5:latest)
 ```
 
 **Agent 元数据** (基于日志):
+
 ```
 WriteAndReviewAgent:
   description: "Generate a story based on user input and review it"
@@ -210,7 +236,7 @@ WriteAndReviewAgent:
     - reviewStory (同上)
 ```
 
-#### 阶段 2: GOAP 规划 (0.024秒)
+### 阶段 2: GOAP 规划 (0.024秒)
 
 ```
 19:50:55.061  创建 Process: relaxed_moore
@@ -235,6 +261,7 @@ WriteAndReviewAgent:
 ```
 
 **日志输出**:
+
 ```
 [relaxed_moore] Formulated plan:
   com.embabel.template.agent.WriteAndReviewAgent.craftStory ->
@@ -244,7 +271,7 @@ WriteAndReviewAgent:
   netValue: 0.0
 ```
 
-#### 阶段 3: 执行 craftStory (3.16秒)
+### 阶段 3: 执行 craftStory (3.16秒)
 
 ```
 19:50:55.085  SimpleAgentProcess.formulateAndExecutePlan()
@@ -295,12 +322,14 @@ WriteAndReviewAgent:
 ```
 
 **世界状态更新**:
+
 ```
 执行前: {UserInput=TRUE, Story=FALSE, ReviewedStory=FALSE, hasRun_craftStory=FALSE}
 执行后: {UserInput=TRUE, Story=TRUE,  ReviewedStory=FALSE, hasRun_craftStory=TRUE}
 ```
 
 **Blackboard 更新**:
+
 ```
 id: 27283519-de42-4807-9fa2-d506bd916876
 map:
@@ -310,7 +339,7 @@ entries:
   - Story[text="In a bustling circus..."]
 ```
 
-#### 阶段 4: 动态重规划 (0.011秒)
+### 阶段 4: 动态重规划 (0.011秒)
 
 ```
 19:50:58.243  检查当前状态:
@@ -333,6 +362,7 @@ entries:
 ```
 
 **日志输出**:
+
 ```
 [relaxed_moore] Formulated plan:
   com.embabel.template.agent.WriteAndReviewAgent.reviewStory
@@ -347,7 +377,7 @@ from:
   it:Story: TRUE
 ```
 
-#### 阶段 5: 执行 reviewStory (3.18秒)
+### 阶段 5: 执行 reviewStory (3.18秒)
 
 ```
 19:50:58.254  SimpleAgentProcess.formulateAndExecutePlan()
@@ -409,12 +439,13 @@ from:
 ```
 
 **世界状态更新**:
+
 ```
 执行前: {UserInput=TRUE, Story=TRUE, ReviewedStory=FALSE, hasRun_reviewStory=FALSE}
 执行后: {UserInput=TRUE, Story=TRUE, ReviewedStory=TRUE,  hasRun_reviewStory=TRUE}
 ```
 
-#### 阶段 6: 目标验证与完成 (0.009秒)
+### 阶段 6: 目标验证与完成 (0.009秒)
 
 ```
 19:51:01.434  GOAP Planner 最终验证:
@@ -437,6 +468,7 @@ from:
 ```
 
 **最终 Blackboard**:
+
 ```
 id: b986b939-16b3-4018-9176-b9cd4b1423a3
 map:
@@ -451,7 +483,7 @@ entries:
   - ReviewedStory[...]
 ```
 
-#### 阶段 7: 结果格式化与输出
+### 阶段 7: 结果格式化与输出
 
 基于 `doc/stack3.txt` 的调用堆栈:
 
@@ -495,241 +527,3 @@ Cost: $0.0000
 
 Tool usage: (none)
 ```
-
----
-
-## 4. GOAP 规划原理
-
-### 4.1 核心算法
-
-GOAP 使用 **A* 搜索算法** 进行规划:
-
-```java
-public List<ActionDefinition> plan(
-    WorldState initial,      // 初始状态
-    WorldState goal,         // 目标状态
-    List<ActionDefinition> actions  // 可用动作
-) {
-    PriorityQueue<PlanNode> openSet = new PriorityQueue<>(
-        Comparator.comparingInt(n -> n.estimatedCost(goal))
-    );
-    
-    Set<WorldState> closedSet = new HashSet<>();
-    PlanNode start = new PlanNode(initial, new ArrayList<>(), 0, null);
-    openSet.add(start);
-    
-    while (!openSet.isEmpty()) {
-        PlanNode current = openSet.poll();
-        
-        if (goalAchieved(current.state, goal)) {
-            return current.plan;  // 返回计划
-        }
-        
-        closedSet.add(current.state);
-        
-        for (ActionDefinition action : actions) {
-            if (!action.canExecute(current.state)) {
-                continue;  // 前置条件不满足
-            }
-            
-            WorldState newState = action.apply(current.state, simulateResult(action));
-            
-            if (closedSet.contains(newState)) {
-                continue;  // 已访问过
-            }
-            
-            List<ActionDefinition> newPlan = new ArrayList<>(current.plan);
-            newPlan.add(action);
-            
-            PlanNode newNode = new PlanNode(
-                newState,
-                newPlan,
-                current.totalCost + action.cost,
-                current
-            );
-            
-            openSet.add(newNode);
-        }
-    }
-    
-    return null;  // 无法找到计划
-}
-```
-
-### 4.2 规划过程可视化
-
-基于真实案例的规划过程:
-
-```
-初始状态: {UserInput=T, Story=F, ReviewedStory=F}
-目标状态: {ReviewedStory=T}
-
-步骤 1: 分析可执行 Actions
-  ├─ craftStory:
-  │  ├─ 前置条件: UserInput=T ✓
-  │  └─ 可执行: YES
-  └─ reviewStory:
-     ├─ 前置条件: UserInput=T ✓, Story=T ✗
-     └─ 可执行: NO
-
-步骤 2: 模拟执行 craftStory
-  ├─ 执行前: {UserInput=T, Story=F, ReviewedStory=F}
-  └─ 执行后: {UserInput=T, Story=T, ReviewedStory=F}
-
-步骤 3: 继续搜索
-  ├─ reviewStory:
-  │  ├─ 前置条件: UserInput=T ✓, Story=T ✓
-  │  └─ 可执行: YES
-  └─ 模拟执行后: {UserInput=T, Story=T, ReviewedStory=T}
-
-步骤 4: 目标检查
-  ├─ 当前状态: ReviewedStory=T
-  ├─ 目标状态: ReviewedStory=T
-  └─ 目标达成 ✓
-
-生成计划: [craftStory → reviewStory]
-耗时: 0.008秒
-```
-
-### 4.3 动态重规划
-
-每执行完一个 Action 后，框架会重新评估:
-
-```
-执行 craftStory 后:
-  ├─ 更新世界状态: Story=TRUE
-  ├─ 检查剩余计划: [reviewStory]
-  ├─ 验证前置条件:
-  │  ├─ UserInput: TRUE ✓
-  │  └─ Story: TRUE ✓
-  ├─ 前置条件满足，继续执行
-  └─ 更新计划: [reviewStory]
-
-执行 reviewStory 后:
-  ├─ 更新世界状态: ReviewedStory=TRUE
-  ├─ 检查目标: ReviewedStory=TRUE ✓
-  └─ 目标达成，流程结束
-```
-
-**重规划触发条件**:
-1. 当前计划为空
-2. 下一个 Action 的前置条件不满足
-3. 发现更优的执行路径
-
----
-
-## 5. 性能分析
-
-### 5.1 时间分解
-
-基于真实日志的性能分析:
-
-```
-总执行时间: 11.38秒
-
-详细分解:
-  1. Agent 选择:        4.99秒  (43.8%)  ← 主要瓶颈
-     └─ LLM 调用:       4.99秒  (459 prompt + 19 completion tokens)
-  
-  2. GOAP 初始规划:     0.024秒 (0.2%)
-  
-  3. craftStory 执行:   3.16秒  (27.8%)
-     ├─ Prompt 构建:    <0.01秒
-     ├─ LLM 调用:       ~3.15秒
-     └─ 对象创建:       <0.01秒
-  
-  4. 状态更新:          0.011秒 (0.1%)
-  
-  5. GOAP 重规划:       0.011秒 (0.1%)
-  
-  6. reviewStory 执行:  3.18秒  (27.9%)
-     ├─ Prompt 构建:    <0.01秒
-     ├─ LLM 调用:       ~3.17秒
-     └─ 对象创建:       <0.01秒
-  
-  7. 目标验证:          0.009秒 (0.1%)
-
-瓶颈分析:
-  - LLM 调用总计:      ~11.32秒 (99.5%)
-    ├─ Agent 选择:     4.99秒   (43.8%)
-    ├─ craftStory:     3.16秒   (27.8%)
-    └─ reviewStory:    3.18秒   (27.9%)
-  - 框架开销:          ~0.06秒  (0.5%)
-```
-
-### 5.2 Token 使用统计
-
-```
-Agent 选择:
-  - Prompt tokens:     459
-  - Completion tokens: 19
-  - Total:             478
-
-craftStory:
-  - Prompt tokens:     估算 ~250
-  - Completion tokens: 估算 ~90
-  - Total:             估算 ~340
-
-reviewStory:
-  - Prompt tokens:     估算 ~200
-  - Completion tokens: 估算 ~80
-  - Total:             估算 ~280
-
-总计 (估算):
-  - Prompt tokens:     ~909
-  - Completion tokens: ~189
-  - Total tokens:      ~1098
-  - Cost:              $0.0000
-```
-
-### 5.3 性能瓶颈
-
-**主要瓶颈**:
-1. **Agent 选择 LLM 调用**: 4.99秒 - 占总时间的 43.8%
-2. **craftStory LLM 调用**: 3.16秒 - 占总时间的 27.8%
-3. **reviewStory LLM 调用**: 3.18秒 - 占总时间的 27.9%
-4. **框架开销**: 0.06秒 - 占总时间的 0.5% (可忽略)
-
-**关键发现**:
-- LLM 调用占据了 99.5% 的执行时间
-- GOAP 规划非常高效 (0.024秒 + 0.011秒)
-- 框架本身的开销极小，反射调用、状态管理等都非常快
-- Agent 选择耗时最长，占了近一半时间
-
-**优化建议**:
-1. **优化 Agent 选择**:
-   - 如果只有一个 Agent，可以跳过 LLM 选择
-   - 使用更快的小模型进行 Agent 选择
-   - 考虑基于规则的 Agent 选择策略
-
-2. **使用更快的 LLM 模型**:
-   - 考虑使用 qwen2.5:1.5b 等小模型
-   - 或使用 qwen3:0.6b 进行快速响应
-
-3. **启用响应缓存**:
-   - 对相同输入缓存 LLM 响应
-   - 避免重复调用
-
-4. **并行执行**:
-   - 如果有多个独立的 Action，可以考虑并行执行
-
-### 5.4 框架开销分析
-
-```
-框架总开销: ~0.06秒 (0.5%)
-
-分解:
-  - Agent 扫描与注册:  <0.01秒
-  - GOAP 规划:         0.035秒 (2次规划)
-  - Action 调用开销:   <0.01秒
-  - 状态管理:          <0.02秒
-  - 目标验证:          0.009秒
-
-结论:
-  - GOAP 规划非常高效 (0.024秒 + 0.011秒)
-  - 框架本身的反射调用开销可忽略不计
-  - 状态管理和 Blackboard 操作都很快
-  - 框架设计优秀，几乎没有性能损耗
-  - 性能完全取决于 LLM 调用速度
-```
-

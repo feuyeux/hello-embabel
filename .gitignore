@@ -84,3 +84,4 @@ coverage/
 # Test results
 test-results/
 junit/
+*.bkp
